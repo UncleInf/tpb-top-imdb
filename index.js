@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name                tpb-top-imdb
 // @namespace           uncleinf
-// @version             0.8
+// @version             0.9
 // @description         Loads imdb rating info for top100 search results
 // @author              UncleInf
 // @license             MIT
@@ -159,7 +159,9 @@
                 };
                 deferred.resolve(data);
             })
-            .fail(deferred.reject);
+            .fail(function() {
+                deferred.reject(iDontKnow());
+            });
 
         return deferred.promise();
     }
