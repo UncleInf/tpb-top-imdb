@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name                tpb-top-imdb
 // @namespace           uncleinf
-// @version             0.7
+// @version             0.8
 // @description         Loads imdb rating info for top100 search results
 // @author              UncleInf
 // @license             MIT
