@@ -159,7 +159,7 @@
                 };
                 deferred.resolve(data);
             })
-            .error(deferred.reject);
+            .fail(deferred.reject);
 
         return deferred.promise();
     }
