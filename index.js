@@ -20,42 +20,151 @@
 // @connect             theimdbapi.org
 // ==/UserScript==
 
-(function() {
+/*
+todo
+
+1. each row return defered successful when done getting imdbid, before calling external api
+    this is hard-ish. imdb id is in store url object or deeper in calling stack. need to refactor
+2. add ids to toggle buttons
+3. do filtering at each row
+*/
+
+(function () {
     'use strict';
     /* global $, store */
 
-    $(function() {
+    $(function () {
         addHeader();
-        $('tr').each(addRating);
+        addOptions();
+        refreshRatings();
     });
 
     function addHeader() {
         var header = $('<th>').attr('title', '6.5 - 7.2 - 8'),
-            a = $('<a>').attr('href', '#').text('Rating').click(refreshRatings);
+            a = $('<a>').attr('href', '#').text('Rating').click(refreshRatingsData);
 
         header.append(a);
         $('th').parent().prepend(header);
     }
 
-    function refreshRatings(e) {
+    function addOptions() {
+        var buttonGetData = function(name) {
+            var storeData = store.get(name);
+            return storeData === undefined ? true : storeData;
+        };
+
+        var dublicatesButton = {
+            text: ' dublicates',
+            initData: function() {
+                return buttonGetData('dublicates');
+            },
+            persistData: function(value) {
+                store.set('dublicates', value);
+            }
+        };
+
+        var noInfoButton = {
+            text: ' no info',
+            initData: function() {
+                return buttonGetData('noInfo');
+            },
+            persistData: function(value) {
+                store.set('noInfo', value);
+            }
+        };
+
+        var optionsCell = $('<td>')
+            .attr('colspan', $('th').length)
+            .append(
+                getToggle(dublicatesButton),
+                ' / ',
+                getToggle(noInfoButton),
+                ' / ',
+                $('<span>').attr('id', 'filteredCount')
+            );
+
+        $('tbody').prepend($('<tr>').append(optionsCell));
+    }
+
+    function getToggle(button) {
+        var getButtonData = function(element, key) {
+            return !!element.data(key);
+        };
+
+        var getButtonText = function(element, data) {
+            var getState = function(data) {
+                return data ? 'Hide' : 'Show';
+            };
+
+            return getState(data === undefined ? getButtonData(element, 'shown') : data) + button.text;
+        };
+
+        var onChange = function() {
+            var element = $(this);
+
+            element.text(getButtonText(element));
+            refreshRatings();
+        };
+
+        var onClick = function(e) {
+            e.preventDefault();
+
+            var element = $(this),
+                changedData = !getButtonData(element, 'shown');
+
+            element.data('shown', changedData).trigger('changeData');
+            button.persistData(changedData);
+        };
+
+        var buttonInitData = button.initData();
+
+        return $('<a>').attr('href', '#')
+            .click(onClick)
+            .on('changeData', onChange)
+            .data('shown', buttonInitData)
+            .text(getButtonText(null, buttonInitData));
+    }
+
+    function updateCount() {
+        var extraLines = 2; //th, options row
+        $('#filteredCount').text($('tr').length - extraLines);
+
+        console.log('update count');
+    }
+
+    function clearCount() {
+        $('#filteredCount').text('--');
+    }
+
+    function refreshRatingsData(e) {
         e.preventDefault();
 
         clearData();
-        $('tr').each(addRating);
+        refreshRatings();
+    }
+
+    function refreshRatings() {
+        var actions = [];
+
+        clearCount();
+        $('tr').each(function() {
+            addRating($(this), actions);
+        });
+        $.when.apply($, actions).done(updateCount);
     }
 
     function clearData() {
         var ratingCells = $('.tpb-top-imdb');
-        
+
         ratingCells.find('a').text('');
         ratingCells.attr('style', '');
 
         store.clearAll();
     }
 
-    function addRating() {
-        var row = $(this),
-            link = row.find('.detLink').attr('href');
+    function addRating(row, actions) {
+        // var row = $(this),
+        var link = row.find('.detLink').attr('href');
 
         //there is no link - it is not downloadable coontent (th)
         if (!link) {
@@ -64,15 +173,21 @@
 
         var elements = findElements(row),
             td = elements.td,
-            center = elements.center;
-
+            center = elements.center,
+            deferred = new $.Deferred();
+        
         getData(link)
-            .then(function(data) {
+            .then(function (data) {
+                deferred.resolve();
                 displayRating(data, td, center);
             })
-            .fail(function(error) {
+            .fail(function (error) {
+                deferred.reject();
                 badData(error, center);
             });
+
+        actions.push(deferred);
+        return deferred.promise(); 
     }
 
     function findElements(row) {
@@ -106,7 +221,7 @@
             deferred.resolve(store.get(linkId));
         } else {
             getAndSaveNewData(link, linkId)
-                .done(function() {
+                .done(function () {
                     deferred.resolve(store.get(linkId));
                 })
                 .fail(deferred.reject);
@@ -124,7 +239,7 @@
         return $.get(link)
             .then(extractImdbId)
             .then(getImdbData)
-            .then(function(data) {
+            .then(function (data) {
                 persistData(data, linkId);
             });
     }
@@ -151,7 +266,7 @@
 
         var apiUrl = 'https://theimdbapi.org/api/movie?movie_id=' + imdbId;
         $.getJSON(apiUrl)
-            .done(function(resp) {
+            .done(function (resp) {
                 var data = {
                     url: resp.url.url,
                     rating: Number.parseFloat(resp.rating),
@@ -159,7 +274,7 @@
                 };
                 deferred.resolve(data);
             })
-            .fail(function() {
+            .fail(function () {
                 deferred.reject(iDontKnow());
             });
 
