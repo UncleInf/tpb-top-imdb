@@ -20,18 +20,106 @@
 // @connect             theimdbapi.org
 // ==/UserScript==
 
-/*
-todo
-
-1. each row return defered successful when done getting imdbid, before calling external api
-    this is hard-ish. imdb id is in store url object or deeper in calling stack. need to refactor
-2. add ids to toggle buttons
-3. do filtering at each row
-*/
 
 (function () {
     'use strict';
     /* global $, store */
+
+    var toggleButton = function(k, t) {
+        var key = k,
+            text = t,
+            element,
+            count,
+            matchingElements = [],
+            notMatchingElements = [],
+
+            initStore = function() {
+                if (isShown() === null) {
+                    setValue(true);
+                }
+            },
+
+            initElement = function() {
+                return $('<a>').attr('href', '#')
+                    .click(onClick)
+                    .text(getButtonText());
+            },
+
+            initCount = function() {
+                return $('<span>');
+            },
+
+            onClick = function(e) {
+                e.preventDefault();
+        
+                invertValue();
+                element.text(getButtonText());
+                refreshRatings();
+            },
+
+            invertValue = function() {
+                setValue(!isShown());
+            },
+
+            getButtonText = function() {
+                return (isShown() ? 'Hide ' : 'Show ') + text;
+            },
+
+            toShow = function(id) {
+                if (matchingElements.includes(id)) {
+                    notMatchingElements.push(id);
+                    return isShown();
+                } else {
+                    matchingElements.push(id);
+                    return true;
+                }
+            },
+
+            clearSavedData = function() {
+                matchingElements = [];
+                notMatchingElements = [];
+            },
+
+            updateCountCount = function() {
+                count.text(notMatchingElements.length);
+            },
+
+            getButton = function() {
+                return $('<span>').append(
+                    element,
+                    ' (', count, ') / '
+                );
+            },
+
+            isShown = function() {
+                return store.get(key);
+            },
+
+            setValue = function(value) {
+                store.set(key, value);
+            };
+
+        (function() {
+            initStore();
+            element = initElement();
+            count = initCount();
+        }());
+
+        return {
+            getButton: getButton,
+            toShow: toShow,
+            clearSavedData: clearSavedData,
+            updateCountCount: updateCountCount
+        };
+    };
+
+
+    var dublicatesButton = toggleButton('showDublicates', 'dublicates'),
+        noInfoButton = toggleButton('showNoInfoItems', 'no info items'),
+        lowRatingButton = toggleButton('showLowRatings', 'low rating'),
+        watchedItems = toggleButton('showWatched', 'watched');
+
+    var actions = [];
 
     $(function () {
         addHeader();
@@ -48,88 +136,25 @@ todo
     }
 
     function addOptions() {
-        var buttonGetData = function(name) {
-            var storeData = store.get(name);
-            return storeData === undefined ? true : storeData;
-        };
+        var filteredCount = $('<span>').attr('id', 'filteredCount'),
+            optionsCell = $('<td>')
+                .attr('colspan', $('th').length)
+                .append(
+                    dublicatesButton.getButton(),
+                    noInfoButton.getButton(),
+                    lowRatingButton.getButton(),
+                    watchedItems.getButton(),
+                    ' / visible - ', filteredCount                    
+                );
 
-        var dublicatesButton = {
-            text: ' dublicates',
-            initData: function() {
-                return buttonGetData('dublicates');
-            },
-            persistData: function(value) {
-                store.set('dublicates', value);
-            }
-        };
-
-        var noInfoButton = {
-            text: ' no info',
-            initData: function() {
-                return buttonGetData('noInfo');
-            },
-            persistData: function(value) {
-                store.set('noInfo', value);
-            }
-        };
-
-        var optionsCell = $('<td>')
-            .attr('colspan', $('th').length)
-            .append(
-                getToggle(dublicatesButton),
-                ' / ',
-                getToggle(noInfoButton),
-                ' / ',
-                $('<span>').attr('id', 'filteredCount')
-            );
-
-        $('tbody').prepend($('<tr>').append(optionsCell));
-    }
-
-    function getToggle(button) {
-        var getButtonData = function(element, key) {
-            return !!element.data(key);
-        };
-
-        var getButtonText = function(element, data) {
-            var getState = function(data) {
-                return data ? 'Hide' : 'Show';
-            };
-
-            return getState(data === undefined ? getButtonData(element, 'shown') : data) + button.text;
-        };
-
-        var onChange = function() {
-            var element = $(this);
-
-            element.text(getButtonText(element));
-            refreshRatings();
-        };
-
-        var onClick = function(e) {
-            e.preventDefault();
-
-            var element = $(this),
-                changedData = !getButtonData(element, 'shown');
-
-            element.data('shown', changedData).trigger('changeData');
-            button.persistData(changedData);
-        };
-
-        var buttonInitData = button.initData();
-
-        return $('<a>').attr('href', '#')
-            .click(onClick)
-            .on('changeData', onChange)
-            .data('shown', buttonInitData)
-            .text(getButtonText(null, buttonInitData));
+        $('tbody').prepend($('<tr>').addClass('tpb-imdb-options').append(optionsCell));
     }
 
     function updateCount() {
         var extraLines = 2; //th, options row
-        $('#filteredCount').text($('tr').length - extraLines);
+        $('#filteredCount').text($('tr:visible').length - extraLines);
 
-        console.log('update count');
+        dublicatesButton.updateCountCount();
     }
 
     function clearCount() {
@@ -144,13 +169,24 @@ todo
     }
 
     function refreshRatings() {
-        var actions = [];
-
+        var rows = getActualrows();
+        
         clearCount();
-        $('tr').each(function() {
-            addRating($(this), actions);
+
+        rows.each(addRating);
+
+        $.when.apply($, actions).done(function() {
+            rows.each(hideRows);
+            updateCount();
+            cleanUpGlobals();
         });
-        $.when.apply($, actions).done(updateCount);
+    }
+
+    function getActualrows() {
+        return $('tr').not('.tpb-imdb-options').filter(function() {
+            var children = $(this).children();
+            return !(children.eq(0).is('th'));
+        });
     }
 
     function clearData() {
@@ -162,9 +198,16 @@ todo
         store.clearAll();
     }
 
-    function addRating(row, actions) {
-        // var row = $(this),
-        var link = row.find('.detLink').attr('href');
+    function hideRows() {
+        var row = $(this),
+            imdbId = row.data('imdbId');
+
+        row.toggle(dublicatesButton.toShow(imdbId));
+    }
+
+    function addRating() {
+        var row = $(this),
+            link = row.find('a[href^="/torrent/"]').attr('href');
 
         //there is no link - it is not downloadable coontent (th)
         if (!link) {
@@ -178,15 +221,18 @@ todo
         
         getData(link)
             .then(function (data) {
-                deferred.resolve();
+                if (!row.data('imdbId')) {
+                    row.data('imdbId', data.imdbId);
+                }
                 displayRating(data, td, center);
+                deferred.resolve();
             })
             .fail(function (error) {
-                deferred.reject();
                 badData(error, center);
+
+                deferred.reject();
             });
 
-        actions.push(deferred);
         return deferred.promise(); 
     }
 
@@ -218,13 +264,16 @@ todo
         }
 
         if (store.has(linkId)) {
+            doneGettingImdbId(deferred);
             deferred.resolve(store.get(linkId));
         } else {
             getAndSaveNewData(link, linkId)
                 .done(function () {
                     deferred.resolve(store.get(linkId));
                 })
-                .fail(deferred.reject);
+                .fail(function() {
+                    deferred.reject(iDontKnow());
+                });
         }
 
         return deferred.promise();
@@ -252,6 +301,7 @@ todo
             id = regexFind && regexFind.length === 2 ? regexFind[1] : null;
 
         if (id) {
+            doneGettingImdbId(deferred);
             deferred.resolve(id);
         } else {
             // console.log('Could not parse IMDB id');
@@ -268,6 +318,7 @@ todo
         $.getJSON(apiUrl)
             .done(function (resp) {
                 var data = {
+                    imdbId: imdbId,
                     url: resp.url.url,
                     rating: Number.parseFloat(resp.rating),
                     ratingCount: resp.rating_count
@@ -318,6 +369,15 @@ todo
         return {
             'background-color': colour
         };
+    }
+
+    function doneGettingImdbId(deferred) {
+        actions.push(deferred);
+    }
+
+    function cleanUpGlobals() {
+        actions = [];
+        dublicatesButton.clearSavedData();
     }
 
     function iDontKnow() {
