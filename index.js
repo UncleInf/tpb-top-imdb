@@ -1,212 +1,187 @@
 // ==UserScript==
 // @name                tpb-top-imdb
 // @namespace           uncleinf
-// @version             0.9
+// @version             1.1
 // @description         Loads imdb rating info for top100 search results
 // @author              UncleInf
 // @license             MIT
 // @supportURL          https://github.com/UncleInf/tpb-top-imdb
 // @contributionURL     https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=HYV6Z2N9BA5V8
 // @contributionAmount  5
-// @require             https://code.jquery.com/jquery-3.2.1.min.js
-// @require             https://cdnjs.cloudflare.com/ajax/libs/store2/2.5.7/store2.min.js
-// @include             http*://thepiratebay.*/top/207
-// @include             http*://thepiratebay.*/top/201
-// @include             http*://thepiratebay.*/top/202
-// @include             http*://thepiratebay.*/top/205
-// @include             http*://thepiratebay.*/top/208
-// @include             http*://thepiratebay.*/top/209
+// @require             https://code.jquery.com/jquery-3.4.1.min.js
+// @include             https://thepiratebay.*/torrent/*
+// @include             https://thepiratebay.*/top/207
+// @include             https://thepiratebay.*/top/201
+// @include             https://thepiratebay.*/top/202
+// @include             https://thepiratebay.*/top/205
+// @include             https://thepiratebay.*/top/208
+// @include             https://thepiratebay.*/top/209
 // @grant               GM_xmlhttpRequest
 // @connect             theimdbapi.org
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
-    /* global $, store */
+    /* global $ */
 
-    $(function() {
-        addHeader();
-        $('tr').each(addRating);
+    $(() => {
+        const $rows = getRows()
+
+        $rows.each((_, r) => {
+            const $row = $(r)
+            const $td = constructCell($row);
+
+            $row.prepend($td)
+        })
+
+        const hasTpbLink = d => d.tpbLink
+
+        const globalData = $rows.get()
+            .map(constructData)
+            .filter(hasTpbLink)
+            .map(fillImdbData)
+
+        $('th').parent().prepend(_ => constructHeader(globalData))
+
+        globalData.forEach(displayRating)
     });
 
-    function addHeader() {
-        var header = $('<th>').attr('title', '6.5 - 7.2 - 8'),
-            a = $('<a>').attr('href', '#').text('Rating').click(refreshRatings);
-
-        header.append(a);
-        $('th').parent().prepend(header);
+    function getRows() {
+        return $('tbody tr')
     }
 
-    function refreshRatings(e) {
-        e.preventDefault();
+    function constructHeader(data) {
+        const header = $('<th>').attr('title', '6.5 - 7.2 - 8 | click to refresh')
 
-        clearData();
-        $('tr').each(addRating);
-    }
+        const refreshRatings = (e, d) => {
+            e.preventDefault()
 
-    function clearData() {
-        var ratingCells = $('.tpb-top-imdb');
-        
-        ratingCells.find('a').text('');
-        ratingCells.attr('style', '');
+            localStorage.clear()
 
-        store.clearAll();
-    }
+            d.forEach(item => {
+                item.$rating.text('--')
+                item.$element.css({ 'background-color': '' })
+            })
 
-    function addRating() {
-        var row = $(this),
-            link = row.find('.detLink').attr('href');
-
-        //there is no link - it is not downloadable coontent (th)
-        if (!link) {
-            return;
+            d.map(fillImdbData).forEach(displayRating)
         }
 
-        var elements = findElements(row),
-            td = elements.td,
-            center = elements.center;
+        const a = $('<a>').attr('href', '#').text('Rating').click(e => refreshRatings(e, data))
 
-        getData(link)
-            .then(function(data) {
-                displayRating(data, td, center);
-            })
-            .fail(function(error) {
-                badData(error, center);
-            });
+        return header.append(a)
     }
 
-    function findElements(row) {
-        var td = row.find('.tpb-top-imdb'),
-            center;
+    function constructCell() {
+        const $td = $('<td>').addClass('vertTh tpb-top-imdb')
+        const $rating = $('<a>').attr('title', 'Initializing data').text('--')
+        const $center = $('<center>').append($rating)
 
-        if (td.length > 0) {
-            center = td.find('center');
-        } else {
-            td = $('<td>').addClass('vertTh tpb-top-imdb');
-            center = $('<center>');
-            row.prepend(td.append(center));
+        return $td.append($center)
+    }
+
+    function constructData(r) {
+        const $row = $(r)
+        const $td = $row.find('.tpb-top-imdb')
+        const $rating = $td.find('a')
+
+        const link = $row.find('a.detLink').attr('href')
+
+        const parseLinkId = l => {
+            const split = l.split('/')
+
+            return split && split.length >= 3 ? split[2] : null
         }
 
         return {
-            td: td,
-            center: center
-        };
+            tpbId: parseLinkId(link),
+            tpbLink: link,
+            $element: $td,
+            $rating: $rating
+        }
     }
 
-    function getData(link) {
-        var deferred = new $.Deferred(),
-            linkId = parseLinkId(link);
+    function fillImdbData(data) {
+        const localData = getlocalImdbData(data.tpbId)
 
-        if (!linkId) {
-            console.log('Couldnt get linkId in url');
-            deferred.reject(iDontKnow());
+        const fetchSaveData = d => fetchImdbData(d.tpbLink).then(r => {
+            if (r) saveLocalImdbData(d.tpbId, r)
+
+            return r
+        })
+
+        return {
+            ...data,
+            imdb: localData ? $.when(localData) : fetchSaveData(data)
+        }
+    }
+
+    function getlocalImdbData(tpbId) {
+        return JSON.parse(localStorage.getItem(tpbId))
+    }
+
+    function saveLocalImdbData(tpbId, imdbData) {
+        console.log('persisiting data')
+        localStorage.setItem(tpbId, JSON.stringify(imdbData))
+    }
+
+    function fetchImdbData(tpbLink) {
+        const extractImdbId = r => {
+            const regexp = 'www.imdb.com/title/(.*)/"'
+            const regexFind = r.match(regexp)
+
+            return regexFind && regexFind.length === 2 ? regexFind[1] : null
         }
 
-        if (store.has(linkId)) {
-            deferred.resolve(store.get(linkId));
-        } else {
-            getAndSaveNewData(link, linkId)
-                .done(function() {
-                    deferred.resolve(store.get(linkId));
-                })
-                .fail(deferred.reject);
+        const fetchImdbApi = id => {
+            if (!id) return null
+
+            const apiUrl = `https://www.omdbapi.com/?apikey=fe430872&i=${id}`
+
+            return $.getJSON(apiUrl).then(r => ({
+                rating: r.imdbRating,
+                count: r.imdbVotes,
+                link: `https://www.imdb.com/title/${id}`
+            }))
         }
 
-        return deferred.promise();
-    }
-
-    function parseLinkId(link) {
-        var split = link.split('/');
-        return split && split.length >= 3 ? split[2] : null;
-    }
-
-    function getAndSaveNewData(link, linkId) {
-        return $.get(link)
+        return $.get(tpbLink)
             .then(extractImdbId)
-            .then(getImdbData)
-            .then(function(data) {
-                persistData(data, linkId);
-            });
+            .then(fetchImdbApi)
     }
 
-    function extractImdbId(resp) {
-        var deferred = new $.Deferred();
+    function displayRating(data) {
+        const getRatingStyles = rating => {
+            let colour = ''
 
-        var regexp = 'www.imdb.com/title/(.*)/"',
-            regexFind = resp.match(regexp),
-            id = regexFind && regexFind.length === 2 ? regexFind[1] : null;
+            if (rating >= 8) {
+                colour = 'palegreen'
+            } else if (rating >= 7.2) {
+                colour = 'powderblue'
+            } else if (rating >= 6.5) {
+                colour = 'lightcyan'
+            }
 
-        if (id) {
-            deferred.resolve(id);
-        } else {
-            // console.log('Could not parse IMDB id');
-            deferred.reject(iDontKnow());
+            return {
+                'background-color': colour
+            };
         }
 
-        return deferred.promise();
+        data.imdb.then(imdbData => {
+            if (!imdbData) {
+                data.$rating.attr('title', 'No data')
+                return
+            }
+
+            data.$rating
+                .text(imdbData.rating)
+                .attr('href', imdbData.link)
+                .attr('title', imdbData.count)
+
+            data.$element.css(getRatingStyles(imdbData.rating))
+        })
     }
 
-    function getImdbData(imdbId) {
-        var deferred = new $.Deferred();
-
-        var apiUrl = 'https://theimdbapi.org/api/movie?movie_id=' + imdbId;
-        $.getJSON(apiUrl)
-            .done(function(resp) {
-                var data = {
-                    url: resp.url.url,
-                    rating: Number.parseFloat(resp.rating),
-                    ratingCount: resp.rating_count
-                };
-                deferred.resolve(data);
-            })
-            .fail(function() {
-                deferred.reject(iDontKnow());
-            });
-
-        return deferred.promise();
-    }
-
-    function persistData(data, id) {
-        store.set(id, data);
-        return $.when();
-    }
-
-    function displayRating(data, td, center) {
-        var a = center.find('a');
-
-        if (a.length === 0) {
-            a = $('<a>').text(data.rating).attr('href', data.url);
-            center.append(a);
-        } else {
-            a.text(data.rating);
-        }
-
-        td.css(getRatingStyles(data.rating));
-        td.attr('title', data.ratingCount);
-    }
-
-    function badData(message, element) {
-        element.text(message);
-    }
-
-    function getRatingStyles(rating) {
-        var colour = '';
-
-        if (rating >= 8) {
-            colour = 'palegreen';
-        } else if (rating >= 7.2) {
-            colour = 'powderblue';
-        } else if (rating >= 6.5) {
-            colour = 'lightcyan';
-        }
-
-        return {
-            'background-color': colour
-        };
-    }
-
-    function iDontKnow() {
-        // return '¯\\_(ツ)_/¯';
-        return '--';
-    }
+    // function iDontKnow() {
+    //     return '¯\\_(ツ)_/¯';
+    // }
 })();
